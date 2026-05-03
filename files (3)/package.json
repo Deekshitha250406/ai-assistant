@@ -1,0 +1,29 @@
+{
+  "name": "aria-backend",
+  "version": "2.1.0",
+  "description": "ARIA Voice Assistant — Express + WebSocket backend",
+  "main": "server.js",
+  "scripts": {
+    "start":   "node server.js",
+    "dev":     "nodemon server.js --watch server.js",
+    "test":    "echo \"No tests yet\" && exit 0"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.37.0",
+    "axios":             "^1.7.0",
+    "cors":              "^2.8.5",
+    "dotenv":            "^16.4.5",
+    "express":           "^4.19.2",
+    "form-data":         "^4.0.0",
+    "mongodb":           "^6.5.0",
+    "multer":            "^1.4.5-lts.1",
+    "node-cron":         "^3.0.3",
+    "ws":                "^8.17.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

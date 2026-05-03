@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ARIA · AI Voice Assistant</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body,#root{height:100%;overflow:hidden}
+body{background:#08090f;color:#dde3f0;font-family:'Outfit',sans-serif}
+::-webkit-scrollbar{width:4px}
+::-webkit-scrollbar-thumb{background:#ffffff18;border-radius:4px}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes slideUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+@keyframes msgIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@keyframes ripple{0%{transform:scale(1);opacity:.6}100%{transform:scale(2.8);opacity:0}}
+@keyframes waveBar{0%,100%{height:3px}50%{height:18px}}
+@keyframes float{0%,100%{transform:translateY(0px)}50%{transform:translateY(-10px)}}
+@keyframes glow{0%,100%{box-shadow:0 0 10px #00e5ff30}50%{box-shadow:0 0 30px #00e5ff70}}
+button{font-family:'Outfit',sans-serif;cursor:pointer;transition:all .18s;border:none;background:none;color:inherit}
+input,textarea{font-family:'Outfit',sans-serif;color:#dde3f0;background:none;border:none;outline:none}
+textarea{resize:none}
+input[type=datetime-local]{color-scheme:dark}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useEffect,useRef,useCallback}=React;
+const C={
+  bg:'#08090f',bg2:'#0e1018',bg3:'#141720',bg4:'#1a1e2a',
+  border:'#ffffff12',border2:'#ffffff1e',border3:'#ffffff28',
+  cyan:'#00e5ff',cyan2:'#00b4cc',
+  gold:'#fbbf24',green:'#22d3a0',purple:'#a78bfa',rose:'#fb7185',
+  text:'#dde3f0',text2:'#7a86a0',text3:'#3a4258',
+};
+const S={
+  card:{background:C.bg2,border:`1px solid ${C.border2}`,borderRadius:16},
+  input:{padding:'10px 14px',borderRadius:10,background:C.bg3,border:`1px solid ${C.border2}`,
+    color:C.text,fontSize:13,width:'100%',fontFamily:'Outfit,sans-serif'},
+};
+
+/* ── Helpers ── */
+const genId=()=>Math.random().toString(36).slice(2)+Date.now().toString(36);
+const fmtTime=d=>new Date(d).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+const fmtDate=d=>{
+  const n=new Date(),dt=new Date(d);
+  if(dt.toDateString()===n.toDateString())return'Today';
+  const y=new Date(n);y.setDate(y.getDate()-1);
+  if(dt.toDateString()===y.toDateString())return'Yesterday';
+  return dt.toLocaleDateString([],{month:'short',day:'numeric'});
+};
+const fmtDT=dt=>new Date(dt).toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+
+/* ── Smart Local AI ── */
+const RULES=[
+  {t:/\b(hi|hello|hey|howdy|yo|sup)\b/i, r:["Hey! I'm ARIA, your AI voice assistant. How can I help?","Hello! Great to hear from you. What's on your mind?","Hi there! Ready to help — what do you need?"]},
+  {t:/\b(how are you|you ok|how do you feel)\b/i, r:["All systems go! I'm doing great. How about you?","Running perfectly! Thanks for asking. What can I do for you?"]},
+  {t:/\b(what can you do|your features|help me|what are you)\b/i, r:["I can chat, answer questions, set reminders, schedule tasks, and remember our conversations. Try saying 'Remind me to...' or just ask me anything!","Here's what I do: 💬 chat, ⏰ set reminders, 📅 scheduling, 🕐 save conversation history, and 🎤 voice input. What would you like to try?"]},
+  {t:/remind|reminder|don't let me forget|alert me/i, fn:(m)=>{
+    const tm=m.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
+    let title=m.replace(/^.*(remind\s*(me)?\s*(to|about)?)/i,'').replace(/\s*(at|by)\s*[\d:apmAMP\s]+/,'').trim()||'Reminder';
+    title=title.charAt(0).toUpperCase()+title.slice(1);
+    let dt=new Date();
+    if(tm){
+      let h=parseInt(tm[1]),mn=parseInt(tm[2]||0),ap=(tm[3]||'').toLowerCase();
+      if(ap==='pm'&&h<12)h+=12;
+      if(ap==='am'&&h===12)h=0;
+      if(!ap&&h>=1&&h<=6)h+=12;
+      dt.setHours(h,mn,0,0);
+      if(dt<new Date())dt.setDate(dt.getDate()+1);
+    }else{dt.setHours(dt.getHours()+1,0,0,0);}
+    const disp=dt.toLocaleString([],{weekday:'short',hour:'2-digit',minute:'2-digit'});
+    return{text:`Got it! ✅ Reminder set for "${title}" at ${disp}. I'll notify you!`,reminder:{title,datetime:dt.toISOString(),display:disp}};
+  }},
+  {t:/\b(time now|what time|current time)\b/i, fn:()=>({text:`It's ${new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'})} right now.`})},
+  {t:/\b(today.*date|what.*date|day.*today|what day)\b/i, fn:()=>({text:`Today is ${new Date().toLocaleDateString([],{weekday:'long',year:'numeric',month:'long',day:'numeric'})}.`})},
+  {t:/\b(joke|funny|laugh|humor)\b/i, r:["Why did the AI go to therapy? Too many deep learning issues! 😄","My neural network walked into a bar. The bartender said, 'We don't serve your type here.' The AI said, 'That's fine, I'm self-trained.' 🤖","Why don't AIs trust atoms? Because they make up everything! 😂"]},
+  {t:/\b(thank|thanks|thx|ty)\b/i, r:["You're welcome! Anything else I can help with?","Happy to help! What else is on your mind?","Anytime! That's what I'm here for. 😊"]},
+  {t:/\b(weather|temperature|forecast|rain)\b/i, r:["I don't have live weather in demo mode, but I can remind you to check it! Try: 'Remind me to check the weather at 7 AM'"]},
+  {t:/\b(schedule|meeting|appointment|book|calendar)\b/i, r:["I'll help you schedule that! Tell me the date and time — like 'Schedule a meeting tomorrow at 3 PM' and I'll set a reminder.","Sure! What's the date and time? Say something like 'Schedule standup Monday at 9 AM'."]},
+  {t:/\b(bye|goodbye|see you|cya|later)\b/i, r:["Goodbye! Come back anytime. 👋","See you later! Your conversations are saved in Recents.","Take care! I'll be here whenever you need me. 🤖"]},
+  {t:/\b(name|who are you|what are you|introduce)\b/i, r:["I'm ARIA — Adaptive Reasoning Intelligence Assistant! I handle voice & text chat, reminders, scheduling, and keep your conversation history. Nice to meet you! 🤖"]},
+  {t:/api key|anthropic|upgrade|full mode|real ai/i, r:["To unlock full Claude AI: tap ⚙️ Settings → enter your Anthropic API key (free at console.anthropic.com). In demo mode, I still handle reminders, scheduling, and smart chat!"]},
+  {t:/\b(yes|yeah|yep|sure|ok|okay|alright)\b/i, r:["Great! What would you like to do?","Perfect! How can I help?","Awesome, let's do it! What do you need?"]},
+  {t:/\b(no|nope|nah|never mind|cancel)\b/i, r:["No problem! Is there anything else I can help with?","Sure thing, no worries. What else can I do for you?"]},
+];
+function smartReply(msg){
+  for(const rule of RULES){
+    if(rule.t.test(msg)){
+      if(rule.fn)return rule.fn(msg);
+      const arr=rule.r;
+      return{text:arr[Math.floor(Math.random()*arr.length)]};
+    }
+  }
+  const fb=["Interesting! I'm in demo mode right now. For full AI responses, add an Anthropic key in ⚙️ Settings. Can I help with scheduling or reminders instead?","Got it! In demo mode I'm best at reminders and scheduling. Want to try 'Remind me to...'?","I hear you! Full AI mode (with an Anthropic key) lets me answer anything. For now — any reminders or tasks I can help with?","Noted! Ask me to set a reminder or schedule something — that's where I shine in demo mode 😊"];
+  return{text:fb[Math.floor(Math.random()*fb.length)]};
+}
+
+/* ── Claude API ── */
+async function callClaude(msgs,key){
+  const r=await fetch('https://api.anthropic.com/v1/messages',{
+    method:'POST',headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+    body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:800,
+      system:`You are ARIA, a helpful warm AI voice assistant. Be concise (2-4 sentences). When user asks to set a reminder, append: REMINDER_SET:{"title":"<t>","datetime":"<ISO>","display":"<human>"}`,
+      messages:msgs})
+  });
+  const d=await r.json();
+  if(!r.ok)throw new Error(d.error?.message||'API Error');
+  return d.content[0]?.text||'';
+}
+const parseReminder=t=>{const m=t.match(/REMINDER_SET:(\{[^}]+\})/);if(!m)return null;try{return JSON.parse(m[1])}catch{return null}};
+const cleanTxt=t=>t.replace(/REMINDER_SET:\{[^}]+\}/g,'').trim();
+
+/* ── Mini components ── */
+const Dot=({on=true,color=C.cyan})=>(
+  <div style={{width:7,height:7,borderRadius:'50%',background:on?color:C.text3,flexShrink:0,
+    boxShadow:on?`0 0 8px ${color}`:'none',animation:on?'pulse 2s infinite':'none'}}/>
+);
+const Wave=()=>(
+  <div style={{display:'flex',alignItems:'center',gap:3,height:20}}>
+    {[0,1,2,3,4].map(i=><div key={i} style={{width:3,background:C.cyan,borderRadius:3,animation:`waveBar .9s ease-in-out ${i*.1}s infinite`}}/>)}
+  </div>
+);
+const Spin=()=><div style={{width:14,height:14,border:`2px solid ${C.border3}`,borderTop:`2px solid ${C.cyan}`,borderRadius:'50%',animation:'spin .7s linear infinite'}}/>;
+const Tag=({c=C.cyan,children})=>(
+  <span style={{fontSize:10,padding:'2px 8px',borderRadius:20,background:c+'18',border:`1px solid ${c}44`,color:c,fontWeight:600,fontFamily:'JetBrains Mono,monospace',letterSpacing:.5}}>{children}</span>
+);
+const Avatar=({src,name,size=32,isAria=false,speaking=false})=>{
+  if(isAria)return(
+    <div style={{width:size,height:size,borderRadius:'50%',background:'linear-gradient(135deg,#00e5ff18,#a78bfa18)',border:`2px solid ${C.cyan}`,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,boxShadow:speaking?`0 0 18px ${C.cyan}66`:`0 0 8px ${C.cyan}22`,animation:speaking?'glow 1.5s infinite':'none',fontSize:size*.42}}>🤖</div>
+  );
+  if(src)return <img src={src} alt={name} style={{width:size,height:size,borderRadius:'50%',border:`2px solid ${C.cyan}`,objectFit:'cover',flexShrink:0}}/>;
+  const init=(name||'U').split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase();
+  return(
+    <div style={{width:size,height:size,borderRadius:'50%',background:C.cyan+'22',border:`2px solid ${C.cyan}`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:size*.38,fontWeight:700,color:C.cyan,flexShrink:0}}>{init}</div>
+  );
+};
+
+/* ══ SIGN IN SCREEN ══ */
+function SignIn({onDone}){
+  const[name,setName]=useState('');
+  const[email,setEmail]=useState('');
+  const[pic,setPic]=useState('');
+  const[step,setStep]=useState('main'); // main | google-help
+  const[googleId,setGoogleId]=useState(()=>localStorage.getItem('aria_gcid')||'');
+  const googleBtnRef=useRef(null);
+
+  const loginDemo=()=>{
+    if(!name.trim())return;
+    const u={name:name.trim(),email:email.trim()||`${name.trim().split(' ')[0].toLowerCase()}@demo.com`,picture:pic||null,sub:'local_'+genId(),isDemo:true};
+    localStorage.setItem('aria_user',JSON.stringify(u));
+    onDone(u);
+  };
+
+  const initGoogle=useCallback((cid)=>{
+    if(!window.google?.accounts?.id)return;
+    window.google.accounts.id.initialize({
+      client_id:cid,
+      callback:(response)=>{
+        try{
+          const p=JSON.parse(atob(response.credential.split('.')[1]));
+          const u={name:p.name,email:p.email,picture:p.picture,sub:p.sub};
+          localStorage.setItem('aria_gcid',cid);
+          localStorage.setItem('aria_user',JSON.stringify(u));
+          onDone(u);
+        }catch(e){alert('Google sign-in failed. Try again.');}
+      }
+    });
+    if(googleBtnRef.current){
+      window.google.accounts.id.renderButton(googleBtnRef.current,{
+        type:'standard',theme:'filled_black',size:'large',shape:'pill',width:260,text:'signin_with'
+      });
+    }
+  },[onDone]);
+
+  useEffect(()=>{
+    if(step==='google'&&googleId){
+      const tryInit=()=>window.google?.accounts?.id?initGoogle(googleId):setTimeout(tryInit,400);
+      tryInit();
+    }
+  },[step,googleId,initGoogle]);
+
+  return(
+    <div style={{position:'fixed',inset:0,background:C.bg,display:'flex',alignItems:'center',justifyContent:'center',overflow:'auto'}}>
+      <div style={{position:'absolute',inset:0,pointerEvents:'none'}}>
+        <div style={{position:'absolute',width:500,height:500,borderRadius:'50%',background:`radial-gradient(circle,${C.cyan}06 0%,transparent 70%)`,top:'0%',left:'50%',transform:'translateX(-50%)'}}/>
+        <div style={{position:'absolute',width:300,height:300,borderRadius:'50%',background:`radial-gradient(circle,${C.purple}08 0%,transparent 70%)`,bottom:'10%',right:'10%'}}/>
+      </div>
+
+      <div style={{width:'100%',maxWidth:420,padding:'20px',position:'relative',zIndex:1}}>
+        {/* Logo */}
+        <div style={{textAlign:'center',marginBottom:32,animation:'slideUp .5s ease'}}>
+          <div style={{width:72,height:72,borderRadius:'50%',margin:'0 auto 16px',background:`linear-gradient(135deg,${C.cyan}18,${C.purple}18)`,border:`2px solid ${C.cyan}66`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:32,animation:'float 3s ease-in-out infinite',boxShadow:`0 0 24px ${C.cyan}18`}}>🤖</div>
+          <div style={{fontSize:38,fontWeight:700,background:`linear-gradient(135deg,${C.cyan},#7fffd4)`,WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent',backgroundClip:'text',letterSpacing:2}}>ARIA</div>
+          <div style={{fontSize:11,color:C.text3,letterSpacing:3,marginTop:4,fontFamily:'JetBrains Mono,monospace'}}>AI VOICE ASSISTANT</div>
+        </div>
+
+        {step==='main'&&(
+          <div style={{animation:'slideUp .4s ease'}}>
+            {/* Quick sign in */}
+            <div style={{...S.card,padding:24,marginBottom:12}}>
+              <div style={{fontSize:11,color:C.text2,letterSpacing:1,fontFamily:'JetBrains Mono,monospace',marginBottom:16}}>QUICK START</div>
+              <input value={name} onChange={e=>setName(e.target.value)} placeholder="Your name" onKeyDown={e=>e.key==='Enter'&&name.trim()&&loginDemo()} style={{...S.input,marginBottom:10}}
+                onFocus={e=>{e.target.style.borderColor=C.cyan+'55'}}
+                onBlur={e=>{e.target.style.borderColor=C.border2}}/>
+              <input value={email} onChange={e=>setEmail(e.target.value)} placeholder="Email (optional)" style={{...S.input,marginBottom:14}}
+                onFocus={e=>{e.target.style.borderColor=C.cyan+'55'}}
+                onBlur={e=>{e.target.style.borderColor=C.border2}}/>
+              <button onClick={loginDemo} disabled={!name.trim()} style={{width:'100%',padding:'11px',borderRadius:10,background:name.trim()?C.cyan:'#1a1e2a',border:`1px solid ${name.trim()?C.cyan:C.border2}`,color:name.trim()?'#08090f':C.text3,fontSize:14,fontWeight:600,letterSpacing:.3}}>
+                {name.trim()?`Launch ARIA →`:'Enter your name to continue'}
+              </button>
+            </div>
+
+            {/* Divider */}
+            <div style={{display:'flex',alignItems:'center',gap:10,margin:'14px 0',color:C.text3,fontSize:11}}>
+              <div style={{flex:1,height:1,background:C.border}}/>OR<div style={{flex:1,height:1,background:C.border}}/>
+            </div>
+
+            {/* Google option */}
+            <div style={{...S.card,padding:20}}>
+              <div style={{fontSize:11,color:C.text2,letterSpacing:1,fontFamily:'JetBrains Mono,monospace',marginBottom:12}}>SIGN IN WITH GOOGLE</div>
+              <p style={{fontSize:12,color:C.text2,lineHeight:1.6,marginBottom:14}}>Use your Google account. Requires a free Client ID from Google Cloud Console.</p>
+              <div style={{display:'flex',gap:8}}>
+                <button onClick={()=>setStep('google-setup')} style={{flex:1,padding:'9px',borderRadius:10,background:`${C.cyan}12`,border:`1px solid ${C.cyan}44`,color:C.cyan,fontSize:12,fontWeight:600}}>
+                  🔑 Set Up Google Sign-In
+                </button>
+              </div>
+            </div>
+
+            <p style={{textAlign:'center',marginTop:14,fontSize:11,color:C.text3,fontFamily:'JetBrains Mono,monospace'}}>All data stored locally in your browser</p>
+          </div>
+        )}
+
+        {step==='google-setup'&&(
+          <div style={{animation:'slideUp .3s ease'}}>
+            <div style={{...S.card,padding:24}}>
+              <button onClick={()=>setStep('main')} style={{fontSize:12,color:C.text2,marginBottom:16,display:'flex',alignItems:'center',gap:4}}>← Back</button>
+              <div style={{fontSize:14,fontWeight:600,marginBottom:6}}>Google Client ID</div>
+              <p style={{fontSize:12,color:C.text2,lineHeight:1.65,marginBottom:16}}>
+                Get a free Client ID in 2 mins:<br/>
+                1. Go to <a href="https://console.cloud.google.com" target="_blank" rel="noreferrer" style={{color:C.cyan}}>console.cloud.google.com</a><br/>
+                2. APIs &amp; Services → Credentials<br/>
+                3. Create OAuth 2.0 Client ID → Web app<br/>
+                4. Add your current URL to Authorized Origins<br/>
+                5. Copy the Client ID and paste below
+              </p>
+              <input value={googleId} onChange={e=>setGoogleId(e.target.value)} placeholder="xxxx.apps.googleusercontent.com" style={{...S.input,marginBottom:10,fontFamily:'JetBrains Mono,monospace',fontSize:11}}
+                onFocus={e=>e.target.style.borderColor=C.cyan+'55'}
+                onBlur={e=>e.target.style.borderColor=C.border2}/>
+              <button onClick={()=>{if(googleId.includes('googleusercontent'))setStep('google');else alert('Paste a valid Google Client ID (ends in .apps.googleusercontent.com)');}}
+                style={{width:'100%',padding:'10px',borderRadius:10,background:`${C.cyan}18`,border:`1px solid ${C.cyan}44`,color:C.cyan,fontSize:13,fontWeight:600}}>
+                Continue with Google →
+              </button>
+            </div>
+          </div>
+        )}
+
+        {step==='google'&&(
+          <div style={{animation:'slideUp .3s ease'}}>
+            <div style={{...S.card,padding:28,textAlign:'center'}}>
+              <button onClick={()=>setStep('main')} style={{fontSize:12,color:C.text2,marginBottom:16,display:'block',textAlign:'left'}}>← Back</button>
+              <div style={{fontSize:14,fontWeight:600,marginBottom:16}}>Sign in with Google</div>
+              <div style={{display:'flex',justifyContent:'center',marginBottom:16}} ref={googleBtnRef}/>
+              <p style={{fontSize:11,color:C.text3}}>Waiting for Google button to load…<br/>Make sure you're online.</p>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ══ CHAT VIEW ══ */
+function Chat({convo,setConvo,setAllConvos,apiKey,user}){
+  const[input,setInput]=useState('');
+  const[loading,setLoading]=useState(false);
+  const[listening,setListening]=useState(false);
+  const[speaking,setSpeaking]=useState(false);
+  const[liveText,setLiveText]=useState('');
+  const[multiSpk,setMultiSpk]=useState(false);
+  const[spkIdx,setSpkIdx]=useState(0);
+  const endRef=useRef(null);
+  const recRef=useRef(null);
+  const synth=useRef(window.speechSynthesis);
+
+  useEffect(()=>{endRef.current?.scrollIntoView({behavior:'smooth'})},[convo.messages]);
+
+  const speak=useCallback(txt=>{
+    if(!txt||!synth.current)return;
+    synth.current.cancel();
+    const u=new SpeechSynthesisUtterance(txt);
+    u.rate=1.05;u.pitch=1;
+    const voices=synth.current.getVoices();
+    const v=voices.find(v=>v.name.includes('Samantha')||v.name.includes('Google US English')||v.name.includes('Zira'));
+    if(v)u.voice=v;
+    u.onstart=()=>setSpeaking(true);
+    u.onend=()=>setSpeaking(false);
+    synth.current.speak(u);
+  },[]);
+
+  const saveConvo=useCallback((msgs,id,title)=>{
+    setAllConvos(prev=>{
+      const ex=prev.find(c=>c.id===id);
+      if(ex)return prev.map(c=>c.id===id?{...c,messages:msgs,updatedAt:Date.now(),title}:c);
+      return[{id,title,messages:msgs,createdAt:Date.now(),updatedAt:Date.now()},...prev];
+    });
+  },[setAllConvos]);
+
+  const send=useCallback(async(txt,spk)=>{
+    if(!txt.trim())return;
+    const um={id:genId(),role:'user',content:txt.trim(),ts:Date.now(),speaker:spk};
+    const msgs=[...convo.messages,um];
+    setConvo(c=>({...c,messages:msgs}));
+    setInput('');setLiveText('');setLoading(true);
+    try{
+      let text='',reminder=null;
+      if(apiKey&&apiKey!=='demo'){
+        const resp=await callClaude(msgs.slice(-20).map(m=>({role:m.role,content:m.content})),apiKey);
+        reminder=parseReminder(resp);text=cleanTxt(resp);
+      }else{
+        await new Promise(r=>setTimeout(r,350+Math.random()*500));
+        const res=smartReply(txt);text=res.text;reminder=res.reminder||null;
+      }
+      const am={id:genId(),role:'assistant',content:text,ts:Date.now()};
+      if(reminder)am.reminder=reminder;
+      const fin=[...msgs,am];
+      const title=convo.title==='New Conversation'?(txt.slice(0,45)+(txt.length>45?'…':'')):convo.title;
+      setConvo(c=>({...c,messages:fin,title}));
+      saveConvo(fin,convo.id,title);
+      speak(text);
+      if(reminder)window.dispatchEvent(new CustomEvent('aria-reminder',{detail:{...reminder,id:genId(),status:'pending',createdAt:Date.now()}}));
+    }catch(e){
+      const em={id:genId(),role:'assistant',content:`Error: ${e.message}`,ts:Date.now(),type:'err'};
+      setConvo(c=>({...c,messages:[...c.messages,em]}));
+    }
+    setLoading(false);
+  },[convo,setConvo,saveConvo,speak,apiKey]);
+
+  const startMic=()=>{
+    const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+    if(!SR){alert('Voice input needs Chrome or Edge browser.');return;}
+    synth.current?.cancel();
+    const r=new SR();r.continuous=false;r.interimResults=true;r.lang='en-US';
+    r.onstart=()=>setListening(true);
+    r.onresult=e=>{
+      let interim='',fin='';
+      for(let i=e.resultIndex;i<e.results.length;i++){const t=e.results[i][0].transcript;if(e.results[i].isFinal)fin+=t;else interim+=t;}
+      setLiveText(fin||interim);
+      if(fin){const s=multiSpk?spkIdx:undefined;if(multiSpk)setSpkIdx(c=>(c+1)%4);send(fin,s);}
+    };
+    r.onerror=()=>setListening(false);r.onend=()=>setListening(false);
+    recRef.current=r;r.start();
+  };
+
+  const spkColors=[C.cyan,C.gold,C.purple,C.green];
+  const hints=["What can you do?","Remind me to drink water at 3 PM","Tell me a joke","What time is it?"];
+
+  return(
+    <div style={{display:'flex',flexDirection:'column',height:'100%'}}>
+      {/* Header */}
+      <div style={{padding:'10px 18px',borderBottom:`1px solid ${C.border}`,display:'flex',alignItems:'center',justifyContent:'space-between',background:C.bg2,flexShrink:0}}>
+        <div style={{display:'flex',alignItems:'center',gap:9}}>
+          <Dot on={true} color={C.green}/>
+          <span style={{fontSize:12,color:C.text2,fontFamily:'JetBrains Mono,monospace',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:280}}>
+            {convo.title==='New Conversation'?'ARIA · ONLINE':convo.title.toUpperCase().slice(0,35)}
+          </span>
+        </div>
+        <button onClick={()=>setMultiSpk(s=>!s)} style={{padding:'4px 10px',borderRadius:20,fontSize:11,background:multiSpk?`${C.purple}22`:'transparent',border:`1px solid ${multiSpk?C.purple:C.border2}`,color:multiSpk?C.purple:C.text2}}>
+          {multiSpk?'👥 Multi ON':'👤 Single'}
+        </button>
+      </div>
+
+      {/* Messages */}
+      <div style={{flex:1,overflowY:'auto',padding:'18px 18px 8px'}}>
+        {convo.messages.length===0&&(
+          <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:'100%',gap:20,animation:'fadeIn .5s ease'}}>
+            <Avatar isAria size={68} speaking={speaking}/>
+            <div style={{textAlign:'center'}}>
+              <div style={{fontSize:22,fontWeight:700,marginBottom:5,background:`linear-gradient(135deg,${C.cyan},#7fffd4)`,WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent',backgroundClip:'text'}}>Hi, {user?.name?.split(' ')[0]||'there'}!</div>
+              <div style={{fontSize:13,color:C.text2,marginBottom:22}}>{apiKey&&apiKey!=='demo'?'Full Claude AI · Ready':'Smart Demo Mode · Try a suggestion'}</div>
+              <div style={{display:'flex',flexWrap:'wrap',gap:8,justifyContent:'center',maxWidth:400}}>
+                {hints.map(h=>(
+                  <button key={h} onClick={()=>send(h)} style={{padding:'8px 14px',borderRadius:20,fontSize:12,background:C.bg3,border:`1px solid ${C.border2}`,color:C.text2}}
+                    onMouseEnter={e=>{e.currentTarget.style.borderColor=C.cyan+'44';e.currentTarget.style.color=C.cyan}}
+                    onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border2;e.currentTarget.style.color=C.text2}}>
+                    {h}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {convo.messages.map(m=>(
+          <div key={m.id} style={{display:'flex',gap:9,marginBottom:14,flexDirection:m.role==='user'?'row-reverse':'row',animation:'msgIn .3s ease'}}>
+            {m.role==='user'?<Avatar src={user?.picture} name={user?.name} size={32}/>:<Avatar isAria size={32} speaking={speaking}/>}
+            <div style={{maxWidth:'76%',display:'flex',flexDirection:'column',alignItems:m.role==='user'?'flex-end':'flex-start',gap:4}}>
+              {m.speaker!==undefined&&<Tag c={spkColors[m.speaker%4]}>Speaker {m.speaker+1}</Tag>}
+              <div style={{padding:'10px 14px',borderRadius:m.role==='user'?'16px 16px 4px 16px':'16px 16px 16px 4px',background:m.role==='user'?`${C.cyan}18`:C.bg3,border:`1px solid ${m.role==='user'?C.cyan+'33':C.border}`,fontSize:13,lineHeight:1.65,color:m.type==='err'?C.rose:C.text,whiteSpace:'pre-wrap'}}>
+                {m.content}
+              </div>
+              {m.reminder&&<div style={{padding:'6px 12px',borderRadius:10,background:`${C.gold}14`,border:`1px solid ${C.gold}33`,fontSize:12,color:C.gold,display:'flex',alignItems:'center',gap:5}}>⏰ {m.reminder.display||m.reminder.title}</div>}
+              <span style={{fontSize:10,color:C.text3,fontFamily:'JetBrains Mono,monospace'}}>{fmtTime(m.ts)}</span>
+            </div>
+          </div>
+        ))}
+
+        {loading&&(
+          <div style={{display:'flex',gap:9,marginBottom:14,animation:'msgIn .3s ease'}}>
+            <Avatar isAria size={32}/>
+            <div style={{padding:'10px 14px',borderRadius:'16px 16px 16px 4px',background:C.bg3,border:`1px solid ${C.border}`,display:'flex',alignItems:'center',gap:8}}>
+              <Spin/><span style={{fontSize:12,color:C.text2}}>ARIA is thinking…</span>
+            </div>
+          </div>
+        )}
+        <div ref={endRef}/>
+      </div>
+
+      {liveText&&<div style={{margin:'0 18px 8px',padding:'8px 14px',borderRadius:10,background:`${C.purple}14`,border:`1px solid ${C.purple}33`,fontSize:12,color:C.purple,fontStyle:'italic',flexShrink:0}}>🎤 "{liveText}"</div>}
+
+      {/* Input bar */}
+      <div style={{padding:'10px 18px',borderTop:`1px solid ${C.border}`,display:'flex',alignItems:'flex-end',gap:9,background:C.bg2,flexShrink:0}}>
+        <textarea value={input} onChange={e=>setInput(e.target.value)}
+          onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send(input)}}}
+          placeholder="Message ARIA… (Enter to send)"
+          rows={1}
+          style={{flex:1,padding:'10px 14px',borderRadius:12,background:C.bg3,border:`1px solid ${C.border2}`,color:C.text,fontSize:13,minHeight:44,maxHeight:120,lineHeight:1.5,transition:'border-color .2s'}}
+          onFocus={e=>e.target.style.borderColor=C.cyan+'55'}
+          onBlur={e=>e.target.style.borderColor=C.border2}/>
+        <button onClick={()=>send(input)} disabled={!input.trim()||loading}
+          style={{width:44,height:44,borderRadius:12,flexShrink:0,background:input.trim()&&!loading?C.cyan:C.bg3,border:`1px solid ${input.trim()&&!loading?C.cyan:C.border2}`,color:input.trim()&&!loading?'#08090f':C.text3,fontSize:18,display:'flex',alignItems:'center',justifyContent:'center'}}>
+          ➤
+        </button>
+        <div style={{position:'relative',flexShrink:0}}>
+          {listening&&<div style={{position:'absolute',inset:-4,borderRadius:'50%',border:`2px solid ${C.cyan}`,opacity:.5,animation:'ripple 1.2s ease-out infinite'}}/>}
+          <button onMouseDown={startMic} onMouseUp={()=>recRef.current?.stop()} onTouchStart={startMic} onTouchEnd={()=>recRef.current?.stop()}
+            style={{width:44,height:44,borderRadius:'50%',flexShrink:0,background:listening?C.cyan:C.bg3,border:`2px solid ${listening?C.cyan:C.border2}`,display:'flex',alignItems:'center',justifyContent:'center',boxShadow:listening?`0 0 20px ${C.cyan}55`:'none'}}>
+            {listening?<Wave/>:<span style={{fontSize:18}}>🎤</span>}
+          </button>
+        </div>
+        <button onClick={()=>{synth.current?.cancel();setSpeaking(false);}}
+          style={{width:44,height:44,borderRadius:12,flexShrink:0,background:speaking?`${C.rose}18`:C.bg3,border:`1px solid ${speaking?C.rose+'44':C.border2}`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:16}}>
+          🔇
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ══ RECENTS ══ */
+function Recents({all,setConvo,setTab,newConvo}){
+  const[q,setQ]=useState('');
+  const filtered=all.filter(c=>c.title.toLowerCase().includes(q.toLowerCase())||c.messages.some(m=>m.content.toLowerCase().includes(q.toLowerCase())));
+  const groups=filtered.reduce((a,c)=>{const k=fmtDate(c.updatedAt);if(!a[k])a[k]=[];a[k].push(c);return a},{});
+  return(
+    <div style={{display:'flex',flexDirection:'column',height:'100%'}}>
+      <div style={{padding:'12px 18px',borderBottom:`1px solid ${C.border}`,background:C.bg2,flexShrink:0}}>
+        <div style={{position:'relative'}}>
+          <span style={{position:'absolute',left:11,top:'50%',transform:'translateY(-50%)',fontSize:13,pointerEvents:'none'}}>🔍</span>
+          <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search conversations…"
+            style={{...S.input,paddingLeft:32}} onFocus={e=>e.target.style.borderColor=C.cyan+'55'} onBlur={e=>e.target.style.borderColor=C.border2}/>
+        </div>
+      </div>
+      <div style={{flex:1,overflowY:'auto',padding:'12px 16px'}}>
+        {all.length===0&&<div style={{textAlign:'center',padding:'50px 20px',color:C.text2}}><div style={{fontSize:36,marginBottom:10}}>💬</div><div style={{fontSize:14}}>No conversations yet</div><div style={{fontSize:12,marginTop:4}}>Start chatting to build history</div></div>}
+        {Object.entries(groups).map(([date,convos])=>(
+          <div key={date}>
+            <div style={{fontSize:10,color:C.text3,padding:'8px 4px 6px',fontFamily:'JetBrains Mono,monospace',letterSpacing:1.5,textTransform:'uppercase'}}>{date}</div>
+            {convos.map(c=>{
+              const last=c.messages[c.messages.length-1];
+              return(
+                <div key={c.id} onClick={()=>{setConvo(c);setTab('chat');}}
+                  style={{padding:'12px 14px',borderRadius:12,marginBottom:6,background:C.bg3,border:`1px solid ${C.border}`,cursor:'pointer',transition:'all .2s'}}
+                  onMouseEnter={e=>{e.currentTarget.style.borderColor=C.cyan+'44';e.currentTarget.style.background=C.bg4}}
+                  onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border;e.currentTarget.style.background=C.bg3}}>
+                  <div style={{display:'flex',justifyContent:'space-between',gap:8,marginBottom:4}}>
+                    <div style={{fontSize:13,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1}}>{c.title}</div>
+                    <span style={{fontSize:10,color:C.text3,flexShrink:0,fontFamily:'JetBrains Mono,monospace'}}>{fmtTime(c.updatedAt)}</span>
+                  </div>
+                  <div style={{fontSize:12,color:C.text2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',marginBottom:8}}>{last?`${last.role==='user'?'You':'ARIA'}: ${last.content.slice(0,60)}…`:'Empty'}</div>
+                  <div style={{display:'flex',gap:6}}><Tag c={C.text2}>{c.messages.length} msgs</Tag>{c.messages.some(m=>m.reminder)&&<Tag c={C.gold}>⏰ Reminder</Tag>}</div>
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+      <div style={{padding:'12px 18px',borderTop:`1px solid ${C.border}`,flexShrink:0}}>
+        <button onClick={newConvo} style={{width:'100%',padding:'10px',borderRadius:10,background:`${C.cyan}18`,border:`1px solid ${C.cyan}44`,color:C.cyan,fontSize:13,fontWeight:600}}>+ New Conversation</button>
+      </div>
+    </div>
+  );
+}
+
+/* ══ SCHEDULER ══ */
+function Scheduler({reminders,setReminders}){
+  const[showAdd,setShowAdd]=useState(false);
+  const[form,setForm]=useState({title:'',datetime:''});
+  const now=new Date();
+  const upcoming=reminders.filter(r=>new Date(r.datetime)>now&&r.status!=='done').sort((a,b)=>new Date(a.datetime)-new Date(b.datetime));
+  const past=reminders.filter(r=>new Date(r.datetime)<=now||r.status==='done');
+  const add=()=>{if(!form.title||!form.datetime)return;setReminders(p=>[...p,{id:genId(),...form,status:'pending',createdAt:Date.now()}]);setForm({title:'',datetime:''});setShowAdd(false);};
+  const uc=dt=>{const m=(new Date(dt)-now)/60000;return m<60?C.rose:m<360?C.gold:C.cyan;};
+  return(
+    <div style={{display:'flex',flexDirection:'column',height:'100%'}}>
+      <div style={{padding:'12px 18px',borderBottom:`1px solid ${C.border}`,display:'flex',alignItems:'center',justifyContent:'space-between',background:C.bg2,flexShrink:0}}>
+        <div><div style={{fontSize:14,fontWeight:700}}>Smart Scheduler</div><div style={{fontSize:11,color:C.text2,fontFamily:'JetBrains Mono,monospace',marginTop:2}}>{upcoming.length} upcoming · {past.length} past</div></div>
+        <button onClick={()=>setShowAdd(s=>!s)} style={{padding:'7px 14px',borderRadius:20,background:`${C.cyan}18`,border:`1px solid ${C.cyan}44`,color:C.cyan,fontSize:12,fontWeight:600}}>+ Add</button>
+      </div>
+      {showAdd&&<div style={{margin:16,padding:16,borderRadius:16,background:C.bg3,border:`1px solid ${C.cyan}33`,animation:'slideUp .2s ease',flexShrink:0}}>
+        <div style={{fontSize:13,fontWeight:600,marginBottom:12}}>New Reminder</div>
+        <input value={form.title} onChange={e=>setForm(f=>({...f,title:e.target.value}))} placeholder="What to remind you about?" style={{...S.input,marginBottom:8}} onFocus={e=>e.target.style.borderColor=C.cyan+'55'} onBlur={e=>e.target.style.borderColor=C.border2}/>
+        <input type="datetime-local" value={form.datetime} onChange={e=>setForm(f=>({...f,datetime:e.target.value}))} style={{...S.input,marginBottom:12}} onFocus={e=>e.target.style.borderColor=C.cyan+'55'} onBlur={e=>e.target.style.borderColor=C.border2}/>
+        <div style={{display:'flex',gap:8}}>
+          <button onClick={add} style={{flex:1,padding:'9px',borderRadius:10,background:`${C.cyan}22`,border:`1px solid ${C.cyan}44`,color:C.cyan,fontSize:13,fontWeight:600}}>Set Reminder</button>
+          <button onClick={()=>setShowAdd(false)} style={{padding:'9px 14px',borderRadius:10,background:'transparent',border:`1px solid ${C.border2}`,color:C.text2,fontSize:13}}>Cancel</button>
+        </div>
+      </div>}
+      <div style={{flex:1,overflowY:'auto',padding:'12px 16px'}}>
+        {reminders.length===0&&<div style={{textAlign:'center',padding:'50px 20px',color:C.text2}}><div style={{fontSize:36,marginBottom:10}}>⏰</div><div style={{fontSize:14}}>No reminders yet</div><div style={{fontSize:12,marginTop:4}}>Say "Remind me to…" in chat, or tap + Add</div></div>}
+        {upcoming.length>0&&<><div style={{fontSize:10,color:C.text3,padding:'8px 4px 6px',fontFamily:'JetBrains Mono,monospace',letterSpacing:1.5}}>UPCOMING</div>
+          {upcoming.map(r=>{const c=uc(r.datetime);return(
+            <div key={r.id} style={{padding:'12px 14px',borderRadius:12,marginBottom:8,background:C.bg3,border:`1px solid ${c}33`,display:'flex',gap:12,animation:'slideUp .3s ease'}}>
+              <div style={{width:4,borderRadius:4,background:c,alignSelf:'stretch',flexShrink:0}}/>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:13,fontWeight:600}}>{r.title}</div>
+                <div style={{fontSize:11,color:c,marginTop:3,fontFamily:'JetBrains Mono,monospace'}}>{fmtDT(r.datetime)}</div>
+                {c===C.rose&&<div style={{fontSize:11,color:C.rose,marginTop:2}}>⚡ Very soon!</div>}
+              </div>
+              <div style={{display:'flex',gap:4,alignItems:'flex-start'}}>
+                <button onClick={()=>setReminders(p=>p.map(x=>x.id===r.id?{...x,status:'done'}:x))} style={{padding:'3px 8px',borderRadius:6,fontSize:11,background:`${C.green}12`,border:`1px solid ${C.green}33`,color:C.green,fontWeight:600}}>Done</button>
+                <button onClick={()=>setReminders(p=>p.filter(x=>x.id!==r.id))} style={{padding:'3px 8px',borderRadius:6,fontSize:11,background:'transparent',border:`1px solid ${C.border2}`,color:C.text3}}>✕</button>
+              </div>
+            </div>
+          );})}
+        </>}
+        {past.length>0&&<><div style={{fontSize:10,color:C.text3,padding:'8px 4px 6px',fontFamily:'JetBrains Mono,monospace',letterSpacing:1.5}}>DONE / PAST</div>
+          {past.map(r=>(
+            <div key={r.id} style={{padding:'10px 14px',borderRadius:12,marginBottom:6,background:C.bg2,border:`1px solid ${C.border}`,display:'flex',gap:12,alignItems:'center',opacity:.5}}>
+              <div style={{width:4,borderRadius:4,background:C.text3,alignSelf:'stretch',flexShrink:0}}/>
+              <div style={{flex:1}}><div style={{fontSize:13,color:C.text2,textDecoration:'line-through'}}>{r.title}</div><div style={{fontSize:11,color:C.text3,fontFamily:'JetBrains Mono,monospace'}}>{fmtDT(r.datetime)}</div></div>
+              <button onClick={()=>setReminders(p=>p.filter(x=>x.id!==r.id))} style={{padding:'3px 8px',borderRadius:6,fontSize:11,background:'transparent',border:`1px solid ${C.border}`,color:C.text3}}>Remove</button>
+            </div>
+          ))}
+        </>}
+      </div>
+    </div>
+  );
+}
+
+/* ══ SETTINGS ══ */
+function Settings({user,apiKey,setApiKey,onSignOut}){
+  const[k,setK]=useState(apiKey&&apiKey!=='demo'?apiKey:'');
+  const[saved,setSaved]=useState(false);
+  const save=()=>{setApiKey(k.trim()||'demo');setSaved(true);localStorage.setItem('aria_apikey',k.trim());setTimeout(()=>setSaved(false),2000);};
+  return(
+    <div style={{height:'100%',overflowY:'auto'}}>
+      <div style={{padding:'12px 18px',borderBottom:`1px solid ${C.border}`,background:C.bg2,fontSize:14,fontWeight:700}}>Settings</div>
+      <div style={{padding:18,display:'flex',flexDirection:'column',gap:14}}>
+
+        <div style={{...S.card,padding:20}}>
+          <div style={{fontSize:11,color:C.text2,letterSpacing:1,fontFamily:'JetBrains Mono,monospace',marginBottom:14}}>PROFILE</div>
+          <div style={{display:'flex',alignItems:'center',gap:14,marginBottom:16}}>
+            <Avatar src={user?.picture} name={user?.name} size={48}/>
+            <div>
+              <div style={{fontSize:15,fontWeight:700}}>{user?.name||'Demo User'}</div>
+              <div style={{fontSize:12,color:C.text2,marginTop:2}}>{user?.email||'demo@aria.ai'}</div>
+              {user?.isDemo&&<Tag c={C.gold}>Demo Login</Tag>}
+            </div>
+          </div>
+          <button onClick={onSignOut} style={{width:'100%',padding:'9px',borderRadius:10,background:`${C.rose}12`,border:`1px solid ${C.rose}33`,color:C.rose,fontSize:13,fontWeight:600}}>Sign Out</button>
+        </div>
+
+        <div style={{...S.card,padding:20}}>
+          <div style={{fontSize:11,color:C.text2,letterSpacing:1,fontFamily:'JetBrains Mono,monospace',marginBottom:4}}>AI ENGINE</div>
+          <div style={{display:'flex',alignItems:'center',gap:7,margin:'10px 0'}}>
+            <Dot on color={apiKey&&apiKey!=='demo'?C.green:C.gold}/>
+            <span style={{fontSize:12,color:C.text2,fontFamily:'JetBrains Mono,monospace'}}>{apiKey&&apiKey!=='demo'?'Claude AI · Connected':'Demo Mode · Smart local AI'}</span>
+          </div>
+          <p style={{fontSize:12,color:C.text2,lineHeight:1.65,marginBottom:14}}>Add an Anthropic API key for full Claude AI power. Get one free at <a href="https://console.anthropic.com" target="_blank" rel="noreferrer" style={{color:C.cyan}}>console.anthropic.com</a></p>
+          <input value={k} onChange={e=>setK(e.target.value)} type="password" placeholder="sk-ant-api03-..."
+            style={{...S.input,fontFamily:'JetBrains Mono,monospace',fontSize:11,marginBottom:8}}
+            onFocus={e=>e.target.style.borderColor=C.cyan+'55'}
+            onBlur={e=>e.target.style.borderColor=C.border2}/>
+          <button onClick={save} style={{width:'100%',padding:'9px',borderRadius:10,background:`${C.cyan}18`,border:`1px solid ${C.cyan}44`,color:C.cyan,fontSize:13,fontWeight:600}}>{saved?'✓ Saved!':'Save API Key'}</button>
+          {apiKey&&apiKey!=='demo'&&<button onClick={()=>{setApiKey('demo');setK('');localStorage.removeItem('aria_apikey');}} style={{marginTop:8,width:'100%',padding:'9px',borderRadius:10,background:'transparent',border:`1px solid ${C.border2}`,color:C.text2,fontSize:12}}>Switch to Demo Mode</button>}
+        </div>
+
+        <div style={{...S.card,padding:20}}>
+          <div style={{fontSize:11,color:C.text2,letterSpacing:1,fontFamily:'JetBrains Mono,monospace',marginBottom:14}}>FEATURES</div>
+          {[['💬','Chat','Text & voice conversations'],['🎤','Voice Input','Hold mic to speak (Chrome/Edge)'],['🔊','TTS','ARIA reads responses aloud'],['🕐','Memory','Recents tab saves all chats'],['⏰','Reminders','Say "Remind me to…"'],['👥','Multi-Speaker','Tag different voices']].map(([i,n,d])=>(
+            <div key={n} style={{display:'flex',alignItems:'center',gap:12,marginBottom:12}}>
+              <span style={{fontSize:16,width:22,textAlign:'center'}}>{i}</span>
+              <div style={{flex:1}}><div style={{fontSize:13,fontWeight:600}}>{n}</div><div style={{fontSize:11,color:C.text2}}>{d}</div></div>
+              <Dot on color={C.green} size={6}/>
+            </div>
+          ))}
+        </div>
+
+        <div style={{fontSize:10,color:C.text3,textAlign:'center',fontFamily:'JetBrains Mono,monospace',padding:'4px 0 20px'}}>ARIA v2.1 · React · Data stored locally</div>
+      </div>
+    </div>
+  );
+}
+
+/* ══ ROOT APP ══ */
+function App(){
+  const[user,setUser]=useState(()=>{try{const u=localStorage.getItem('aria_user');return u?JSON.parse(u):null}catch{return null}});
+  const[tab,setTab]=useState('chat');
+  const[apiKey,setApiKey]=useState(()=>localStorage.getItem('aria_apikey')||'demo');
+  const[convo,setConvo]=useState(()=>({id:genId(),title:'New Conversation',messages:[],createdAt:Date.now(),updatedAt:Date.now()}));
+  const[allConvos,setAllConvos]=useState([]);
+  const[reminders,setReminders]=useState([]);
+
+  useEffect(()=>{const h=e=>setReminders(p=>[...p,e.detail]);window.addEventListener('aria-reminder',h);return()=>window.removeEventListener('aria-reminder',h);},[]);
+  useEffect(()=>{Notification?.requestPermission?.();},[]);
+  useEffect(()=>{
+    const tick=setInterval(()=>{
+      const now=new Date();
+      reminders.forEach(r=>{
+        if(r.status==='pending'&&Math.abs(new Date(r.datetime)-now)<31000){
+          Notification?.permission==='granted'&&new Notification('ARIA Reminder 🔔',{body:r.title});
+          setReminders(p=>p.map(x=>x.id===r.id?{...x,status:'triggered'}:x));
+        }
+      });
+    },30000);
+    return()=>clearInterval(tick);
+  },[reminders]);
+
+  const newConvo=()=>{setConvo({id:genId(),title:'New Conversation',messages:[],createdAt:Date.now(),updatedAt:Date.now()});setTab('chat');};
+  const signOut=()=>{localStorage.removeItem('aria_user');localStorage.removeItem('aria_apikey');window.google?.accounts?.id?.disableAutoSelect?.();setUser(null);};
+
+  if(!user)return <SignIn onDone={u=>{setUser(u);localStorage.setItem('aria_user',JSON.stringify(u));}}/>;
+
+  const tabs=[{id:'chat',icon:'💬',label:'Chat'},{id:'recents',icon:'🕐',label:'Recents',badge:allConvos.length||null},{id:'scheduler',icon:'📅',label:'Schedule',badge:reminders.filter(r=>r.status==='pending'&&new Date(r.datetime)>new Date()).length||null},{id:'settings',icon:'⚙️',label:'Settings'}];
+
+  return(
+    <div style={{display:'flex',height:'100vh',background:C.bg,overflow:'hidden'}}>
+      {/* Sidebar */}
+      <div style={{width:58,background:C.bg2,borderRight:`1px solid ${C.border}`,display:'flex',flexDirection:'column',alignItems:'center',padding:'12px 0',gap:4,flexShrink:0}}>
+        <div style={{width:36,height:36,borderRadius:10,marginBottom:12,background:`linear-gradient(135deg,${C.cyan}18,${C.purple}18)`,border:`1.5px solid ${C.cyan}44`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:17,boxShadow:`0 0 14px ${C.cyan}14`}}>🤖</div>
+        {tabs.map(t=>(
+          <div key={t.id} style={{position:'relative'}}>
+            <button onClick={()=>setTab(t.id)} title={t.label}
+              style={{width:42,height:42,borderRadius:10,background:tab===t.id?`${C.cyan}18`:'transparent',border:`1px solid ${tab===t.id?C.cyan+'44':'transparent'}`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:17,transition:'all .2s'}}
+              onMouseEnter={e=>{if(tab!==t.id)e.currentTarget.style.background=C.bg3}}
+              onMouseLeave={e=>{if(tab!==t.id)e.currentTarget.style.background='transparent'}}>
+              {t.icon}
+            </button>
+            {t.badge>0&&<div style={{position:'absolute',top:4,right:4,width:15,height:15,borderRadius:'50%',background:C.rose,fontSize:9,display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontWeight:700}}>{t.badge}</div>}
+          </div>
+        ))}
+        <div style={{flex:1}}/>
+        <button onClick={newConvo} title="New Chat" style={{width:42,height:42,borderRadius:10,background:'transparent',border:`1px solid ${C.border}`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:15}}
+          onMouseEnter={e=>e.currentTarget.style.borderColor=C.cyan+'44'}
+          onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>✏️</button>
+        <button onClick={()=>setTab('settings')} style={{marginTop:4,marginBottom:4}}>
+          {user?.picture?<img src={user.picture} style={{width:32,height:32,borderRadius:'50%',border:`2px solid ${C.cyan}`,objectFit:'cover'}}/>:<div style={{width:32,height:32,borderRadius:'50%',background:`${C.cyan}22`,border:`2px solid ${C.cyan}`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,fontWeight:700,color:C.cyan}}>{(user?.name||'U').charAt(0).toUpperCase()}</div>}
+        </button>
+      </div>
+
+      {/* Main */}
+      <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:0}}>
+        <div style={{display:'flex',borderBottom:`1px solid ${C.border}`,background:C.bg2,flexShrink:0}}>
+          {tabs.map(t=>(
+            <button key={t.id} onClick={()=>setTab(t.id)} style={{padding:'10px 16px',background:'transparent',border:'none',borderBottom:`2px solid ${tab===t.id?C.cyan:'transparent'}`,color:tab===t.id?C.cyan:C.text2,fontSize:13,fontWeight:tab===t.id?600:400,display:'flex',alignItems:'center',gap:5,transition:'all .2s'}}>
+              <span style={{fontSize:13}}>{t.icon}</span>{t.label}
+              {t.badge>0&&<span style={{background:C.rose,color:'#fff',fontSize:10,padding:'1px 5px',borderRadius:10,fontWeight:700}}>{t.badge}</span>}
+            </button>
+          ))}
+          <div style={{flex:1}}/>
+          <div style={{display:'flex',alignItems:'center',padding:'0 14px',gap:6}}>
+            <Dot on color={apiKey&&apiKey!=='demo'?C.green:C.gold} size={6}/>
+            <span style={{fontSize:11,color:C.text3,fontFamily:'JetBrains Mono,monospace'}}>{apiKey&&apiKey!=='demo'?'Claude AI':'Demo Mode'}</span>
+          </div>
+        </div>
+        <div style={{flex:1,overflow:'hidden'}}>
+          {tab==='chat'&&<Chat convo={convo} setConvo={setConvo} setAllConvos={setAllConvos} apiKey={apiKey} user={user}/>}
+          {tab==='recents'&&<Recents all={allConvos} setConvo={setConvo} setTab={setTab} newConvo={newConvo}/>}
+          {tab==='scheduler'&&<Scheduler reminders={reminders} setReminders={setReminders}/>}
+          {tab==='settings'&&<Settings user={user} apiKey={apiKey} setApiKey={setApiKey} onSignOut={signOut}/>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
